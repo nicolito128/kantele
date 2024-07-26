@@ -1,0 +1,11 @@
+# Environment
+.env
+
+# Build
+*/*.exe
+
+# Private
+*/*-private.*
+
+# IDE
+.vscode
