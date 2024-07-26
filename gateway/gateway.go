@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -22,12 +21,14 @@ type Gateway struct {
 	conn              *websocket.Conn
 	restClient        *rest.Client
 	heartbeatInterval time.Duration
+	events            eventHandler
 }
 
 func New(token string) *Gateway {
 	return &Gateway{
 		token:      token,
 		restClient: rest.NewClient(token),
+		events:     make(eventHandler),
 	}
 }
 
@@ -35,8 +36,12 @@ func (gtw *Gateway) Open() {
 	go gtw.connect()
 }
 
-func (gtw *Gateway) Client() *rest.Client {
+func (gtw *Gateway) Rest() *rest.Client {
 	return gtw.restClient
+}
+
+func (gtw *Gateway) HandleEvent(eventName string, handler func(any)) {
+	gtw.events.Append(eventName, handler)
 }
 
 func (gtw *Gateway) connect() {
@@ -118,25 +123,14 @@ func (gtw *Gateway) handleEvent(eventName string, data any) {
 	case "READY":
 		log.Println("\nBot is ready!")
 
+		gtw.events.Call(eventName, data)
+
 	case "MESSAGE_CREATE":
-		message, ok := data.(map[string]any)
-		if !ok {
-			panic("message shuld be parsed")
-		}
-
-		content := message["content"].(string)
-
-		if strings.HasPrefix(content, "!ping") {
-			channelId := message["channel_id"].(string)
-			gtw.restClient.Post(fmt.Sprintf("/channels/%s/messages", channelId), struct {
-				Content string `json:"content"`
-			}{
-				Content: "pong!",
-			})
-		}
+		gtw.events.Call(eventName, data)
 
 	default:
 		fmt.Println("\nUnhandled event:", eventName, data)
+		gtw.events.Call(eventName, data)
 	}
 }
 

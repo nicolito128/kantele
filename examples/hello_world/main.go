@@ -5,7 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
-	"time"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/nicolito128/kantele/gateway"
@@ -16,18 +16,30 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
-
 	token := os.Getenv("BOT_TOKEN")
+
 	client := gateway.New(token)
 
-	// Open connection
-	client.Open()
+	client.HandleEvent("MESSAGE_CREATE", func(data any) {
+		message, ok := data.(map[string]any)
+		if !ok {
+			panic("message should be parsed")
+		}
 
-	// Rest example
-	go func() {
-		time.Sleep(2 * time.Second)
+		content := message["content"].(string)
 
-		res, err := client.Client().Get("/users/@me")
+		if strings.HasPrefix(content, "!ping") {
+			channelId := message["channel_id"].(string)
+			client.Rest().Post(fmt.Sprintf("/channels/%s/messages", channelId), struct {
+				Content string `json:"content"`
+			}{
+				Content: "pong!",
+			})
+		}
+	})
+
+	client.HandleEvent("READY", func(a any) {
+		res, err := client.Rest().Get("/users/@me")
 		if err != nil {
 			log.Fatal("rest error: ", err)
 		}
@@ -38,7 +50,10 @@ func main() {
 		}
 
 		fmt.Println(string(b))
-	}()
+	})
+
+	// Open connection
+	client.Open()
 
 	<-make(chan struct{})
 }
