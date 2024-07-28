@@ -22,13 +22,13 @@ const (
 	github = "github.com/nicolito128/kantele"
 )
 
-type Client struct {
+type Rest struct {
 	botToken   string
 	httpClient *http.Client
 }
 
-func NewClient(token string) *Client {
-	return &Client{
+func New(token string) *Rest {
+	return &Rest{
 		botToken:   token,
 		httpClient: &http.Client{},
 	}
@@ -37,7 +37,7 @@ func NewClient(token string) *Client {
 // Do sends an HTTP request using an internal client,
 // attaching the necesary authorization headers,
 // then returns an HTTP response and an error.
-func (ct *Client) Do(method, endpoint string, data any) (*http.Response, error) {
+func (r *Rest) Do(method, endpoint string, data any) (*http.Response, error) {
 	if !strings.HasPrefix(endpoint, "/") {
 		endpoint = "/" + endpoint
 	}
@@ -62,7 +62,7 @@ func (ct *Client) Do(method, endpoint string, data any) (*http.Response, error) 
 
 	// Adding headers
 	req.Header.Add("User-Agent", fmt.Sprintf("DiscordBot (%s)", github))
-	req.Header.Add("Authorization", fmt.Sprintf("Bot %s", ct.botToken))
+	req.Header.Add("Authorization", fmt.Sprintf("Bot %s", r.botToken))
 	req.Header.Add("Content-Type", "application/json")
 
 	res, err := http.DefaultClient.Do(req)
@@ -85,24 +85,24 @@ func (ct *Client) Do(method, endpoint string, data any) (*http.Response, error) 
 
 // Get sends an HTTP GET request using an internal client,
 // then returns an HTTP response and an error.
-func (cl *Client) Get(endpoint string) (*http.Response, error) {
-	return cl.Do(http.MethodGet, endpoint, nil)
+func (r *Rest) Get(endpoint string) (*http.Response, error) {
+	return r.Do(http.MethodGet, endpoint, nil)
 }
 
 // Post sends an HTTP POST request using an internal client,
 // then returns an HTTP response and an error.
-func (cl *Client) Post(endpoint string, data any) (*http.Response, error) {
-	return cl.Do(http.MethodPost, endpoint, data)
+func (r *Rest) Post(endpoint string, data any) (*http.Response, error) {
+	return r.Do(http.MethodPost, endpoint, data)
 }
 
 // Patch sends an HTTP PATCH request using an internal client,
 // then returns an HTTP response and an error.
-func (cl *Client) Patch(endpoint string, data any) (*http.Response, error) {
-	return cl.Do(http.MethodPatch, endpoint, data)
+func (r *Rest) Patch(endpoint string, data any) (*http.Response, error) {
+	return r.Do(http.MethodPatch, endpoint, data)
 }
 
 // Delete sends an HTTP DELETE request using an internal client,
 // then returns an HTTP response and an error.
-func (cl *Client) Delete(endpoint string) (*http.Response, error) {
-	return cl.Do(http.MethodDelete, endpoint, nil)
+func (r *Rest) Delete(endpoint string) (*http.Response, error) {
+	return r.Do(http.MethodDelete, endpoint, nil)
 }

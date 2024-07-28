@@ -4,40 +4,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nicolito128/kantele/discord"
-	"github.com/nicolito128/kantele/rest"
-)
-
-const (
-	GatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
 )
 
 type Gateway struct {
-	token             string
-	sequence          int
-	conn              *websocket.Conn
-	restClient        *rest.Client
+	config *Config
+
+	token string
+
+	conn *websocket.Conn
+
 	heartbeatInterval time.Duration
-	events            eventHandler
+
+	events eventHandler
 }
 
-func New(token string) *Gateway {
+func New(token string, opts ...ConfigOpt) *Gateway {
+	conf := DefaultConfig()
+	for _, opt := range opts {
+		opt(conf)
+	}
+
 	return &Gateway{
-		token:      token,
-		restClient: rest.NewClient(token),
-		events:     make(eventHandler),
+		config: conf,
+		token:  token,
+		events: make(eventHandler),
 	}
 }
 
 func (gtw *Gateway) Open() {
+	gtw.config.Logger.Info("Openning gateway...")
 	go gtw.connect()
-}
-
-func (gtw *Gateway) Rest() *rest.Client {
-	return gtw.restClient
 }
 
 func (gtw *Gateway) HandleEvent(eventName string, handler func(any)) {
@@ -45,48 +45,49 @@ func (gtw *Gateway) HandleEvent(eventName string, handler func(any)) {
 }
 
 func (gtw *Gateway) connect() {
-	fmt.Println("Openning gateway connection...")
+	defer gtw.config.Logger.Info("Connection finished.")
 
-	conn, res, err := websocket.DefaultDialer.Dial(GatewayURL, nil)
+	conn, res, err := gtw.config.Dialer.Dial(gtw.config.URL, nil)
 	if err != nil {
-		log.Printf("handshake failed with status %d", res.StatusCode)
-		log.Fatal("dial:", err)
+		gtw.config.Logger.Error("handshake failed with:", slog.Int("status", res.StatusCode))
+		log.Fatal("dial error:", err)
 	}
 	defer conn.Close()
+
 	gtw.conn = conn
 
 outer:
 	for {
 		typ, b, err := gtw.conn.ReadMessage()
 		if err != nil {
-			log.Fatal("read message:", err)
+			gtw.config.Logger.Error("Read message error:", slog.Any("err", err))
+			break outer
 		}
 
 		switch typ {
 		case websocket.CloseMessage:
-			log.Println("Closing connection...")
+			gtw.config.Logger.Debug("Closing connection...")
 			break outer
 
 		case websocket.TextMessage:
 			msg := map[string]any{}
 			if err := json.Unmarshal(b, &msg); err != nil {
-				panic(err)
+				gtw.config.Logger.Error("read message: %w", slog.Any("err", err))
+				break outer
 			}
 
-			gtw.handlePayload(gtw.token, msg)
+			gtw.handlePayload(msg)
 
 		default:
-			log.Println("\nconn message:", typ, string(b))
+			gtw.config.Logger.Debug("Conn message:", slog.Int("typ", typ), slog.String("b", string(b)))
 		}
 	}
-
-	log.Println("Connection finished!")
 }
 
-func (gtw *Gateway) handlePayload(token string, payload map[string]any) {
+func (gtw *Gateway) handlePayload(payload map[string]any) {
 	opcode, data, seq, t := payload["op"], payload["d"], payload["s"], payload["t"]
 	if v, ok := seq.(int); ok {
-		gtw.sequence = v
+		gtw.config.LastSequence = &v
 	}
 
 	var eventName string
@@ -102,27 +103,26 @@ func (gtw *Gateway) handlePayload(token string, payload map[string]any) {
 		}
 
 		gtw.heartbeatInterval = time.Duration(m["heartbeat_interval"].(float64)) * time.Millisecond
-		gtw.identify(token)
+		gtw.identify()
 		go gtw.heartbeat()
 
 	case 11: // Heartbeat ACK
-		log.Println("Heartbeat acknowledged")
+		gtw.config.Logger.Info("Heartbeat acknowledged")
 
 	case 0: // Dispatch event
 		go gtw.handleEvent(eventName, data)
 
 	default:
-		log.Println("Unhandled payload:", payload)
+		gtw.config.Logger.Debug("Unhandled payload:", slog.Any("payload", payload))
 	}
 }
 
 func (gtw *Gateway) handleEvent(eventName string, data any) {
-	fmt.Println("\nEvent received:", eventName, data)
+	gtw.config.Logger.Info("Event received:", slog.Any("eventName", eventName))
 
 	switch eventName {
 	case "READY":
-		log.Println("\nBot is ready!")
-
+		gtw.config.Logger.Info("Gateway connection is ready!")
 		gtw.events.Call(eventName, data)
 
 	case "MESSAGE_CREATE":
@@ -134,45 +134,45 @@ func (gtw *Gateway) handleEvent(eventName string, data any) {
 	}
 }
 
-func (gtw *Gateway) identify(token string) {
-	log.Println("Identifying...")
+func (gtw *Gateway) identify() {
+	gtw.config.Logger.Info("Identifying...")
 
-	idPayload := discord.Identify{
-		Payload: discord.Payload[discord.IdentifyData]{
-			Op: 2,
-			D: discord.IdentifyData{
-				Token:   token,
-				Intents: 33280,
-				Properties: discord.IdentifyProperties{
-					OS:      "win32",
-					Browser: "kantele",
-					Device:  "kantele",
-				},
-			},
+	identify := Identify{}
+	identify.Op = 2
+	identify.D = IdentifyData{
+		Token:          gtw.token,
+		Intents:        gtw.config.Intents,
+		Compress:       gtw.config.Compress,
+		LargeThreshold: gtw.config.LargeThreshold,
+		Properties: IdentifyConnectionProperties{
+			OS:      gtw.config.OS,
+			Browser: gtw.config.Browser,
+			Device:  gtw.config.Device,
 		},
 	}
 
-	if err := gtw.conn.WriteJSON(idPayload); err != nil {
+	if err := gtw.conn.WriteJSON(identify); err != nil {
 		panic(err)
 	}
 }
 
 func (gtw *Gateway) heartbeat() {
-	fmt.Println("Starting heartbeat...")
+	gtw.config.Logger.Info("Starting heartbeat...")
 
 	heartbeatTicker := time.NewTicker(gtw.heartbeatInterval)
 	defer heartbeatTicker.Stop()
 
 	for range heartbeatTicker.C {
-		heartb := discord.Heartbeat{
-			Payload: discord.Payload[int]{
-				Op: 1,
-				D:  gtw.sequence,
-			},
+		heartb := Heartbeat{}
+		heartb.Op = 1
+		if gtw.config.LastSequence != nil {
+			heartb.D = *gtw.config.LastSequence
 		}
 
 		if err := gtw.conn.WriteJSON(heartb); err != nil {
 			panic(err)
 		}
+
+		gtw.config.Logger.Debug("heartbeat sent")
 	}
 }

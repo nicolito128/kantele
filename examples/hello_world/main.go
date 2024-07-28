@@ -9,18 +9,25 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/nicolito128/kantele/gateway"
+	"github.com/nicolito128/kantele/rest"
 )
 
 func main() {
+	// loading env
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
 	token := os.Getenv("BOT_TOKEN")
 
-	client := gateway.New(token)
+	// using the kantele gateway
+	gtw := gateway.New(token, gateway.WithIntents(gateway.Intents(33280)))
 
-	client.HandleEvent("MESSAGE_CREATE", func(data any) {
+	// using a rest client for HTTP requests to discord api
+	restClient := rest.New(token)
+
+	// throw an event when "MESSAGE_CREATE" is received
+	gtw.HandleEvent("MESSAGE_CREATE", func(data any) {
 		message, ok := data.(map[string]any)
 		if !ok {
 			panic("message should be parsed")
@@ -30,7 +37,7 @@ func main() {
 
 		if strings.HasPrefix(content, "!ping") {
 			channelId := message["channel_id"].(string)
-			client.Rest().Post(fmt.Sprintf("/channels/%s/messages", channelId), struct {
+			restClient.Post(fmt.Sprintf("/channels/%s/messages", channelId), struct {
 				Content string `json:"content"`
 			}{
 				Content: "pong!",
@@ -38,8 +45,9 @@ func main() {
 		}
 	})
 
-	client.HandleEvent("READY", func(a any) {
-		res, err := client.Rest().Get("/users/@me")
+	// throw an event when "READY" is received
+	gtw.HandleEvent("READY", func(a any) {
+		res, err := restClient.Get("/users/@me")
 		if err != nil {
 			log.Fatal("rest error: ", err)
 		}
@@ -52,8 +60,9 @@ func main() {
 		fmt.Println(string(b))
 	})
 
-	// Open connection
-	client.Open()
+	// open the gateway connection
+	gtw.Open()
 
+	// hold the main goroutine running
 	<-make(chan struct{})
 }
